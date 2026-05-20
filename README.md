@@ -4,8 +4,8 @@
 
 | Файл | Назначение |
 |------|------------|
-| `Segment Anything (SAM) + OWLVIT-v3.ipynb` | Рекомендуемая версия: пути берутся из `local_config.py` (с запасным вариантом жёстко прописанных путей Windows). |
-| `Segment Anything (SAM) + OWLVIT-v4.ipynb` | Та же логика; все пути заданы прямо в ячейках ноутбука (Windows). |
+| `notebooks/Segment Anything (SAM) + OWLVIT-v3.ipynb` | Рекомендуемая версия: пути берутся из `local_config.py` (с запасным вариантом жёстко прописанных путей Windows). |
+| `notebooks/Segment Anything (SAM) + OWLVIT-v4.ipynb` | Та же логика; все пути заданы прямо в ячейках ноутбука (Windows). |
 
 ## Что делает программа
 
@@ -109,7 +109,7 @@ wget -O "Нейронка_ЦИИ/weights/sam_vit_b_01ec64.pth" \
 Для production-запуска добавлены скрипты:
 
 - `mask_pipeline.py` — core-логика детекции OWL-ViT + сегментации SAM и сборки бинарной маски.
-- `run_mask_pipeline.py` — CLI-обвязка для обработки видеофайла или камеры.
+- `camera_tools/run_mask_pipeline.py` — CLI-обвязка для обработки видеофайла или камеры.
 
 ### Формат выхода
 
@@ -130,7 +130,7 @@ make mask-video INPUT=recordings/road.mp4 MASK_OUTPUT=outputs/road_mask.mp4 FPS=
 Прямой запуск:
 
 ```bash
-python run_mask_pipeline.py \
+python camera_tools/run_mask_pipeline.py \
   --mode video \
   --input recordings/road.mp4 \
   --output outputs/road_mask.mp4 \
@@ -155,7 +155,7 @@ make mask-camera CAMERA=0 STREAM_URL="rtsp://127.0.0.1:8554/mask" STREAM_FORMAT=
 Прямой запуск:
 
 ```bash
-python run_mask_pipeline.py \
+python camera_tools/run_mask_pipeline.py \
   --mode camera \
   --camera 0 \
   --fps 10 \
@@ -214,5 +214,5 @@ ffplay "rtsp://127.0.0.1:8554/mask"
 - `setup.sh` — установка окружения и ядра Jupyter
 - `local_config.example.py` — шаблон путей для v3
 - `mask_pipeline.py` — core-пайплайн масок
-- `run_mask_pipeline.py` — запуск видео/камера -> маска (файл/поток)
+- `camera_tools/run_mask_pipeline.py` — запуск видео/камера -> маска (файл/поток)
 - `Makefile` — быстрые команды `record`, `mask-video`, `mask-camera`
