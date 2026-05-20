@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Локальная конфигурация (копируется из local_config.example.py)
+local_config.py
+
+# Веса SAM (~375 MB) — скачать по инструкции в README
+weights/*.pth
+weights/.cache/
+
+# Артефакты запуска
+outputs/
+recordings/*.mp4
+recordings/*.avi
+
+# Jupyter
+.ipynb_checkpoints/
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

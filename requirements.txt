@@ -1,0 +1,12 @@
+torch>=2.0.0
+torchvision>=0.15.0
+transformers>=4.35.0
+opencv-python>=4.8.0
+matplotlib>=3.7.0
+Pillow>=10.0.0
+numpy>=1.24.0
+requests>=2.31.0
+scikit-image>=0.21.0
+jupyter>=1.0.0
+ipykernel>=6.25.0
+segment-anything @ git+https://github.com/facebookresearch/segment-anything.git
