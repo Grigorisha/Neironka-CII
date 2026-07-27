@@ -15,17 +15,18 @@ CALIB_APPLY_DIR = Path(__file__).resolve().parent / "undistortion" / "apply"
 if str(CALIB_APPLY_DIR) not in sys.path:
     sys.path.insert(0, str(CALIB_APPLY_DIR))
 
-from calibration_io import CameraCalibration, load_calibration
-
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Обработка одного PNG: OWL-ViT + SAM -> цветная instance-маска PNG."
+        description=(
+            "Обработка одного изображения набором YOLO-моделей дефектов "
+            "покрытия (трещины/яма/разметка) -> PNG с боксами."
+        )
     )
     parser.add_argument(
         "--input-image",
         required=True,
-        help="Путь к входному PNG (или другому формату, читаемому OpenCV).",
+        help="Путь к входному изображению (PNG/JPG, всё что читает OpenCV).",
     )
     parser.add_argument(
         "--output-dir",
@@ -34,49 +35,39 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--output-name",
-        default="instance_mask.png",
+        default="yolo_detections.png",
         help="Имя выходного PNG файла в output-dir.",
     )
-    parser.add_argument("--threshold", type=float, default=0.15, help="Порог OWL-ViT.")
     parser.add_argument(
-        "--texts",
+        "--weights-dir",
         default="",
-        help="Список классов через запятую. Пусто = DEFAULT_TEXTS из mask_pipeline.py",
+        help="Папка с .pt весами. Пусто = YOLO_WEIGHTS_DIR из local_config.py.",
     )
+    parser.add_argument("--threshold", type=float, default=0.25, help="Порог уверенности YOLO.")
     parser.add_argument(
         "--calib",
-        required=True,
-        help="Путь к файлу калибровки OpenCV YAML (camera_calib.yml).",
+        default="",
+        help=(
+            "Опционально: файл калибровки OpenCV YAML (camera_calib.yml) для undistort "
+            "перед детекцией. По умолчанию не применяется — YOLO-модели обучены на "
+            "необработанных кадрах видеорегистратора, а не на кадрах с камеры этого стенда."
+        ),
     )
     return parser.parse_args()
 
 
-def _parse_texts(arg_texts: str) -> list[str] | None:
-    cleaned = [x.strip() for x in arg_texts.split(",") if x.strip()]
-    return cleaned or None
-
-
 def _make_color_bgr(idx: int) -> tuple[int, int, int]:
-    # Детеминированная палитра по индексу объекта.
-    hue = (idx * 47) % 180
+    # Детерминированная палитра по индексу модели (не объекта — так у каждого
+    # типа дефекта свой цвет на всех кадрах).
+    hue = (idx * 61) % 180
     hsv = np.uint8([[[hue, 220, 255]]])
     bgr = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)[0, 0]
     return int(bgr[0]), int(bgr[1]), int(bgr[2])
 
 
-def _build_instance_color_mask(masks: list[np.ndarray], shape_hw: tuple[int, int]) -> np.ndarray:
-    height, width = shape_hw
-    colored = np.zeros((height, width, 3), dtype=np.uint8)
+def _load_required_calibration(path_str: str):
+    from calibration_io import load_calibration
 
-    for idx, mask in enumerate(masks, start=1):
-        if mask.shape != (height, width):
-            continue
-        color = _make_color_bgr(idx)
-        colored[mask.astype(bool)] = color
-    return colored
-
-
-def _load_required_calibration(path_str: str) -> CameraCalibration:
     calib_path = Path(path_str).expanduser().resolve()
     if not calib_path.exists():
         raise FileNotFoundError(f"Файл калибровки не найден: {calib_path}")
@@ -86,7 +77,7 @@ def _load_required_calibration(path_str: str) -> CameraCalibration:
         raise RuntimeError(f"Не удалось загрузить калибровку из {calib_path}: {exc}") from exc
 
 
-def _ensure_resolution_matches(frame: np.ndarray, calib: CameraCalibration) -> None:
+def _ensure_resolution_matches(frame: np.ndarray, calib) -> None:
     frame_h, frame_w = frame.shape[:2]
     if (frame_w, frame_h) != (calib.image_width, calib.image_height):
         raise RuntimeError(
@@ -98,8 +89,8 @@ def _ensure_resolution_matches(frame: np.ndarray, calib: CameraCalibration) -> N
 def run() -> int:
     args = parse_args()
 
-    from local_config import MODEL_TYPE, SAM_CHECKPOINT
-    from mask_pipeline import SamOwlVitMaskPipeline
+    from local_config import YOLO_WEIGHTS_DIR
+    from yolo_pipeline import RoadDefectYoloPipeline
 
     input_path = Path(args.input_image).expanduser().resolve()
     if not input_path.exists():
@@ -108,9 +99,11 @@ def run() -> int:
     frame_bgr = cv2.imread(str(input_path), cv2.IMREAD_COLOR)
     if frame_bgr is None:
         raise RuntimeError(f"Не удалось прочитать изображение: {input_path}")
-    calib = _load_required_calibration(args.calib)
-    _ensure_resolution_matches(frame_bgr, calib)
-    frame_bgr = calib.undistort(frame_bgr)
+
+    if args.calib:
+        calib = _load_required_calibration(args.calib)
+        _ensure_resolution_matches(frame_bgr, calib)
+        frame_bgr = calib.undistort(frame_bgr)
 
     output_dir = Path(args.output_dir).expanduser().resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -118,23 +111,37 @@ def run() -> int:
     if output_path.suffix.lower() != ".png":
         output_path = output_path.with_suffix(".png")
 
-    pipeline = SamOwlVitMaskPipeline(
-        sam_checkpoint=SAM_CHECKPOINT,
-        model_type=MODEL_TYPE,
-        texts=_parse_texts(args.texts),
-        threshold=args.threshold,
-    )
-    print(f"Device: {pipeline.device}")
+    weights_dir = Path(args.weights_dir).expanduser().resolve() if args.weights_dir else Path(YOLO_WEIGHTS_DIR)
+    pipeline = RoadDefectYoloPipeline(weights_dir=weights_dir, threshold=args.threshold)
+    print(f"Моделей загружено: {len(pipeline.models)} из {weights_dir}")
 
-    detections = pipeline.detect_boxes(frame_bgr)
-    masks = pipeline.segment_boxes(frame_bgr, (d.box_xyxy for d in detections))
-    colored_mask = _build_instance_color_mask(masks, frame_bgr.shape[:2])
+    detections = pipeline.detect(frame_bgr)
 
-    ok = cv2.imwrite(str(output_path), colored_mask)
+    annotated = frame_bgr.copy()
+    model_keys = list(pipeline.models.keys())
+    for det in detections:
+        color = _make_color_bgr(model_keys.index(det.model_key))
+        x1, y1, x2, y2 = (int(v) for v in det.box_xyxy)
+        cv2.rectangle(annotated, (x1, y1), (x2, y2), color, 2)
+        caption = f"{det.label}: {det.score:.2f}"
+        cv2.putText(
+            annotated,
+            caption,
+            (x1, max(y1 - 8, 12)),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.6,
+            color,
+            2,
+            cv2.LINE_AA,
+        )
+
+    ok = cv2.imwrite(str(output_path), annotated)
     if not ok:
         raise RuntimeError(f"Не удалось сохранить PNG: {output_path}")
 
-    print(f"detections={len(detections)} instances={len(masks)}")
+    print(f"detections={len(detections)}")
+    for det in detections:
+        print(f"  [{det.model_key}] {det.label}: {det.score:.3f} box={det.box_xyxy.tolist()}")
     print(f"Готово: {output_path}")
     return 0
 

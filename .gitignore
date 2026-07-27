@@ -12,6 +12,9 @@ local_config.py
 weights/*.pth
 weights/.cache/
 
+# Веса YOLO-детекторов дефектов покрытия (~200 MB суммарно)
+weights_yolo/*.pt
+
 # Артефакты запуска
 outputs/
 recordings/*.mp4

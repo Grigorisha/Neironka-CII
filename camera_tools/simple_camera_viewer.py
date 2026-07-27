@@ -14,10 +14,17 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import time
 from typing import List, Optional, Tuple
 
 import cv2
+
+CALIB_APPLY_DIR = os.path.join(os.path.dirname(__file__), "undistortion", "apply")
+if CALIB_APPLY_DIR not in sys.path:
+    sys.path.insert(0, CALIB_APPLY_DIR)
+
+from calibration_io import CameraCalibration, load_calibration
 
 
 def list_video_devices() -> List[Tuple[str, str]]:
@@ -102,6 +109,25 @@ def infer_display_from_xauthority(xauthority_path: str) -> Optional[str]:
     return f":{min(displays)}"
 
 
+def _load_required_calibration(path_str: str) -> CameraCalibration:
+    calib_path = os.path.abspath(os.path.expanduser(path_str))
+    if not os.path.exists(calib_path):
+        raise FileNotFoundError(f"Файл калибровки не найден: {calib_path}")
+    try:
+        return load_calibration(calib_path)
+    except Exception as exc:
+        raise RuntimeError(f"Не удалось загрузить калибровку из {calib_path}: {exc}") from exc
+
+
+def _ensure_resolution_matches(frame, calib: CameraCalibration) -> None:
+    frame_h, frame_w = frame.shape[:2]
+    if (frame_w, frame_h) != (calib.image_width, calib.image_height):
+        raise RuntimeError(
+            "Размер кадра не совпадает с калибровкой: "
+            f"frame={frame_w}x{frame_h}, calib={calib.image_width}x{calib.image_height}"
+        )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Simple camera viewer")
     parser.add_argument("--device", help="Camera device path, e.g. /dev/video0")
@@ -118,7 +144,18 @@ def main() -> int:
     parser.add_argument("--headless", action="store_true", help="Run without GUI and save stream to file")
     parser.add_argument("--output", default="/tmp/camera_capture.avi", help="Output video path for headless mode")
     parser.add_argument("--max-frames", type=int, default=300, help="Frames to capture in headless mode")
+    parser.add_argument(
+        "--calib",
+        help="Путь к файлу калибровки OpenCV YAML (camera_calib.yml).",
+    )
     args = parser.parse_args()
+    calib: Optional[CameraCalibration] = None
+    if args.calib:
+        try:
+            calib = _load_required_calibration(args.calib)
+        except Exception as exc:
+            print(f"Error: {exc}")
+            return 1
 
     devices = list_video_devices()
     if args.list:
@@ -166,11 +203,20 @@ def main() -> int:
         print(f"Capturing up to {args.max_frames} frames...")
         frame_count = 0
         start = time.time()
+        fatal_error = False
         while frame_count < args.max_frames:
             ok, frame = cap.read()
             if not ok:
                 print("Frame read failed. Exiting.")
                 break
+            if calib is not None:
+                try:
+                    _ensure_resolution_matches(frame, calib)
+                except RuntimeError as exc:
+                    print(f"Error: {exc}")
+                    fatal_error = True
+                    break
+                frame = calib.undistort(frame)
             if writer is not None:
                 writer.write(frame)
             frame_count += 1
@@ -183,6 +229,8 @@ def main() -> int:
             writer.release()
             print(f"Saved: {args.output}")
         cap.release()
+        if fatal_error:
+            return 1
         return 0
 
     # Help non-GUI terminals (SSH/IDE) connect to an existing desktop session.
@@ -195,10 +243,19 @@ def main() -> int:
             print(f"DISPLAY was not set. Using {inferred_display} from Xauthority.")
 
     if args.window_backend == "gstreamer":
+        if calib is not None:
+            print("Error: calibration preview/toggle supports only --window-backend opencv.")
+            cap.release()
+            return 1
         cap.release()
         return run_gstreamer_window(opened_device, args.width, args.height, args.fps)
 
-    print("Press 'q' to quit.")
+    undistort_enabled = calib is not None
+    if calib is not None:
+        print("Press 'c' to toggle calibration ON/OFF, 'q' to quit.")
+    else:
+        print("Press 'q' to quit.")
+    fatal_error = False
 
     try:
         while True:
@@ -206,20 +263,47 @@ def main() -> int:
             if not ok:
                 print("Frame read failed. Exiting.")
                 break
+            if calib is not None:
+                try:
+                    _ensure_resolution_matches(frame, calib)
+                except RuntimeError as exc:
+                    print(f"Error: {exc}")
+                    fatal_error = True
+                    break
+                if undistort_enabled:
+                    frame = calib.undistort(frame)
+                status = "undistort=ON" if undistort_enabled else "undistort=OFF"
+                cv2.putText(
+                    frame,
+                    status,
+                    (10, 28),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.8,
+                    (0, 255, 0) if undistort_enabled else (0, 200, 255),
+                    2,
+                    cv2.LINE_AA,
+                )
 
             cv2.imshow("Simple Camera Viewer", frame)
             key = cv2.waitKey(1) & 0xFF
             if key == ord("q"):
                 break
+            if calib is not None and key == ord("c"):
+                undistort_enabled = not undistort_enabled
     except cv2.error as exc:
         print(f"OpenCV window backend failed: {exc}")
-        print("Falling back to GStreamer window backend...")
+        print("Fallback to GStreamer backend...")
         cap.release()
         cv2.destroyAllWindows()
+        if calib is not None:
+            print("Error: GStreamer backend does not support calibration toggle.")
+            return 1
         return run_gstreamer_window(opened_device, args.width, args.height, args.fps)
 
     cap.release()
     cv2.destroyAllWindows()
+    if fatal_error:
+        return 1
     return 0
 
 

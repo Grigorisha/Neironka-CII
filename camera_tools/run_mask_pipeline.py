@@ -16,6 +16,11 @@ import numpy as np
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
+CALIB_APPLY_DIR = Path(__file__).resolve().parent / "undistortion" / "apply"
+if str(CALIB_APPLY_DIR) not in sys.path:
+    sys.path.insert(0, str(CALIB_APPLY_DIR))
+
+from calibration_io import CameraCalibration, load_calibration
 
 
 def parse_args() -> argparse.Namespace:
@@ -54,6 +59,11 @@ def parse_args() -> argparse.Namespace:
         "--preview",
         action="store_true",
         help="Показывать окно: слева исходный кадр, справа маска.",
+    )
+    parser.add_argument(
+        "--calib",
+        required=True,
+        help="Путь к файлу калибровки OpenCV YAML (camera_calib.yml).",
     )
     return parser.parse_args()
 
@@ -136,6 +146,25 @@ def _parse_texts(arg_texts: str) -> list[str] | None:
     return cleaned or None
 
 
+def _load_required_calibration(path_str: str) -> CameraCalibration:
+    calib_path = Path(path_str).expanduser().resolve()
+    if not calib_path.exists():
+        raise FileNotFoundError(f"Файл калибровки не найден: {calib_path}")
+    try:
+        return load_calibration(calib_path)
+    except Exception as exc:
+        raise RuntimeError(f"Не удалось загрузить калибровку из {calib_path}: {exc}") from exc
+
+
+def _ensure_resolution_matches(frame: np.ndarray, calib: CameraCalibration) -> None:
+    frame_h, frame_w = frame.shape[:2]
+    if (frame_w, frame_h) != (calib.image_width, calib.image_height):
+        raise RuntimeError(
+            "Размер кадра не совпадает с калибровкой: "
+            f"frame={frame_w}x{frame_h}, calib={calib.image_width}x{calib.image_height}"
+        )
+
+
 def _open_capture(args: argparse.Namespace) -> cv2.VideoCapture:
     if args.mode == "video":
         if not args.input:
@@ -193,6 +222,7 @@ def _build_preview_frame(frame_bgr: np.ndarray, mask_gray: np.ndarray) -> np.nda
 def run() -> int:
     args = parse_args()
     texts = _parse_texts(args.texts)
+    calib = _load_required_calibration(args.calib)
 
     from local_config import MODEL_TYPE, SAM_CHECKPOINT
     from mask_pipeline import SamOwlVitMaskPipeline
@@ -223,6 +253,8 @@ def run() -> int:
                     break
                 print("Камера не вернула кадр, завершаю.")
                 break
+            _ensure_resolution_matches(frame, calib)
+            frame = calib.undistort(frame)
 
             mask, detections = pipeline.process_frame(frame)
             writer.write(mask)

@@ -21,13 +21,15 @@ source /home/orin/workspace/.venvs/detection/bin/activate
 - `local_config.py`
 - `weights/sam_vit_b_01ec64.pth`
 - `camera_tools/run_mask_image.py`
+- `camera_tools/undistortion/config/camera_calib.yml`
 
 ## 2) Основная команда
 
 ```bash
 python camera_tools/run_mask_image.py \
   --input-image /абсолютный/или/относительный/путь/input.png \
-  --output-dir /путь/к/папке_для_результата
+  --output-dir /путь/к/папке_для_результата \
+  --calib /home/orin/workspace/detection/camera_tools/undistortion/config/camera_calib.yml
 ```
 
 Что делает команда:
@@ -47,7 +49,8 @@ python camera_tools/run_mask_image.py \
 python camera_tools/run_mask_image.py \
   --input-image outputs/test_input_frame2.png \
   --output-dir outputs/single_image_masks \
-  --output-name mask_colored.png
+  --output-name mask_colored.png \
+  --calib camera_tools/undistortion/config/camera_calib.yml
 ```
 
 Изменить порог детекции:
@@ -56,7 +59,8 @@ python camera_tools/run_mask_image.py \
 python camera_tools/run_mask_image.py \
   --input-image outputs/test_input_frame2.png \
   --output-dir outputs/single_image_masks \
-  --threshold 0.05
+  --threshold 0.05 \
+  --calib camera_tools/undistortion/config/camera_calib.yml
 ```
 
 Ограничить список классов (по умолчанию используется большой список из `mask_pipeline.py`):
@@ -65,7 +69,8 @@ python camera_tools/run_mask_image.py \
 python camera_tools/run_mask_image.py \
   --input-image outputs/test_input_frame2.png \
   --output-dir outputs/single_image_masks \
-  --texts "car,truck,person,tree,pothole,road sign"
+  --texts "car,truck,person,tree,pothole,road sign" \
+  --calib camera_tools/undistortion/config/camera_calib.yml
 ```
 
 ## 4) Полный рабочий пример
@@ -78,7 +83,8 @@ python camera_tools/run_mask_image.py \
   --input-image outputs/test_input_frame2.png \
   --output-dir outputs/single_image_masks \
   --output-name mask_colored2.png \
-  --threshold 0.05
+  --threshold 0.05 \
+  --calib camera_tools/undistortion/config/camera_calib.yml
 ```
 
 Ожидаемый результат:
@@ -100,12 +106,14 @@ python -c "import cv2; cap=cv2.VideoCapture('recordings/webcam_20260515_191043.m
 ```bash
 python camera_tools/run_mask_image.py \
   --input-image outputs/frame_from_video.png \
-  --output-dir outputs/single_image_masks
+  --output-dir outputs/single_image_masks \
+  --calib camera_tools/undistortion/config/camera_calib.yml
 ```
 
 ## 6) Типовые проблемы
 
 - `FileNotFoundError` на входном изображении: проверьте путь в `--input-image`.
 - Ошибка по checkpoint: убедитесь, что есть `weights/sam_vit_b_01ec64.pth`.
+- Ошибка по калибровке: проверьте путь в `--calib` и соответствие разрешения кадра параметрам в YAML.
 - Долгий первый запуск: `transformers` может докачивать модельные файлы.
 - Предупреждение `torchvision/io image extension`: в текущем сценарии обычно не критично, обработка может работать нормально.

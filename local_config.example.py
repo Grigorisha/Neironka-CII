@@ -10,3 +10,7 @@ images_path = str(Path(__file__).resolve().parent / "data" / "images") + "/"
 SAM_CHECKPOINT = str(Path(__file__).resolve().parent / "weights" / "sam_vit_b_01ec64.pth")
 
 MODEL_TYPE = "vit_b"  # vit_b | vit_l | vit_h
+
+# Веса YOLO-детекторов дефектов покрытия (продольная/поперечная трещина,
+# "крокодиловая" трещина, яма, разметка).
+YOLO_WEIGHTS_DIR = str(Path(__file__).resolve().parent / "weights_yolo")

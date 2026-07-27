@@ -8,6 +8,12 @@ from typing import List, Optional
 
 import cv2
 
+CALIB_APPLY_DIR = Path(__file__).resolve().parent / "undistortion" / "apply"
+if str(CALIB_APPLY_DIR) not in sys.path:
+    sys.path.insert(0, str(CALIB_APPLY_DIR))
+
+from calibration_io import CameraCalibration, load_calibration
+
 
 RGB_FOURCC_HINTS = ("MJPG", "YUYV", "UYVY", "RGB3", "BGR3")
 DEPTH_FOURCC_HINTS = ("Z16", "Y16", "GREY")
@@ -28,6 +34,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--width", type=int, default=1280, help="Желаемая ширина кадра.")
     parser.add_argument("--height", type=int, default=720, help="Желаемая высота кадра.")
     parser.add_argument("--warmup-frames", type=int, default=10, help="Сколько кадров пропустить для стабилизации.")
+    parser.add_argument(
+        "--calib",
+        required=True,
+        help="Путь к файлу калибровки OpenCV YAML (camera_calib.yml).",
+    )
     return parser.parse_args()
 
 
@@ -84,8 +95,32 @@ def pick_rgb_devices(explicit_device: Optional[str]) -> List[Path]:
     return candidates
 
 
+def _load_required_calibration(path_str: str) -> CameraCalibration:
+    calib_path = Path(path_str).expanduser().resolve()
+    if not calib_path.exists():
+        raise FileNotFoundError(f"Файл калибровки не найден: {calib_path}")
+    try:
+        return load_calibration(calib_path)
+    except Exception as exc:
+        raise RuntimeError(f"Не удалось загрузить калибровку из {calib_path}: {exc}") from exc
+
+
+def _ensure_resolution_matches(frame, calib: CameraCalibration) -> None:
+    frame_h, frame_w = frame.shape[:2]
+    if (frame_w, frame_h) != (calib.image_width, calib.image_height):
+        raise RuntimeError(
+            "Размер кадра не совпадает с калибровкой: "
+            f"frame={frame_w}x{frame_h}, calib={calib.image_width}x{calib.image_height}"
+        )
+
+
 def main() -> int:
     args = parse_args()
+    try:
+        calib = _load_required_calibration(args.calib)
+    except Exception as exc:
+        print(f"Ошибка: {exc}", file=sys.stderr)
+        return 1
 
     output_dir = Path(args.output_dir).expanduser().resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -126,6 +161,12 @@ def main() -> int:
             for err in open_errors:
                 print(f"  - {err}", file=sys.stderr)
         return 1
+    try:
+        _ensure_resolution_matches(frame, calib)
+    except RuntimeError as exc:
+        print(f"Ошибка: {exc}", file=sys.stderr)
+        return 1
+    frame = calib.undistort(frame)
 
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     output_path = output_dir / f"realsense_rgb_{ts}.jpg"

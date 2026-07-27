@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import os
 import shutil
 import subprocess
 import sys
@@ -7,6 +8,12 @@ import time
 from pathlib import Path
 
 import cv2
+
+CALIB_APPLY_DIR = Path(__file__).resolve().parent / "undistortion" / "apply"
+if str(CALIB_APPLY_DIR) not in sys.path:
+    sys.path.insert(0, str(CALIB_APPLY_DIR))
+
+from calibration_io import CameraCalibration, load_calibration
 
 
 def parse_args() -> argparse.Namespace:
@@ -19,6 +26,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--camera", type=int, default=0, help="Индекс веб-камеры.")
     parser.add_argument("--width", type=int, default=1280, help="Ширина кадра.")
     parser.add_argument("--height", type=int, default=720, help="Высота кадра.")
+    parser.add_argument(
+        "--calib",
+        required=True,
+        help="Путь к файлу калибровки OpenCV YAML (camera_calib.yml).",
+    )
     return parser.parse_args()
 
 
@@ -49,8 +61,32 @@ def transcode_to_h264(input_path: Path, output_path: Path, fps: float) -> bool:
         return False
 
 
+def _load_required_calibration(path_str: str) -> CameraCalibration:
+    calib_path = Path(path_str).expanduser().resolve()
+    if not calib_path.exists():
+        raise FileNotFoundError(f"Файл калибровки не найден: {calib_path}")
+    try:
+        return load_calibration(calib_path)
+    except Exception as exc:
+        raise RuntimeError(f"Не удалось загрузить калибровку из {calib_path}: {exc}") from exc
+
+
+def _ensure_resolution_matches(frame, calib: CameraCalibration) -> None:
+    frame_h, frame_w = frame.shape[:2]
+    if (frame_w, frame_h) != (calib.image_width, calib.image_height):
+        raise RuntimeError(
+            "Размер кадра не совпадает с калибровкой: "
+            f"frame={frame_w}x{frame_h}, calib={calib.image_width}x{calib.image_height}"
+        )
+
+
 def main() -> int:
     args = parse_args()
+    try:
+        calib = _load_required_calibration(args.calib)
+    except Exception as exc:
+        print(f"Ошибка: {exc}", file=sys.stderr)
+        return 1
     output_path = Path(args.output).resolve()
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -80,22 +116,38 @@ def main() -> int:
         return 1
 
     print(f"Запись началась: {args.duration} сек, {args.fps} FPS.")
-    print("Нажмите 'q' в окне предпросмотра для досрочной остановки.")
+    has_display = bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
+    if has_display:
+        print("Нажмите 'q' в окне предпросмотра для досрочной остановки.")
+    else:
+        print("GUI не обнаружен: предпросмотр отключен, запись в headless-режиме.")
 
     start = time.time()
+    fatal_error = False
     while (time.time() - start) < args.duration:
         ok, frame = cap.read()
         if not ok:
             print("Предупреждение: кадр не получен, запись остановлена.")
             break
-        writer.write(frame)
-        cv2.imshow("Webcam recording (press q to stop)", frame)
-        if cv2.waitKey(1) & 0xFF == ord("q"):
+        try:
+            _ensure_resolution_matches(frame, calib)
+        except RuntimeError as exc:
+            print(f"Ошибка: {exc}", file=sys.stderr)
+            fatal_error = True
             break
+        frame = calib.undistort(frame)
+        writer.write(frame)
+        if has_display:
+            cv2.imshow("Webcam recording (press q to stop)", frame)
+            if cv2.waitKey(1) & 0xFF == ord("q"):
+                break
 
     cap.release()
     writer.release()
     cv2.destroyAllWindows()
+    if fatal_error:
+        temp_raw.unlink(missing_ok=True)
+        return 1
 
     if transcode_to_h264(temp_raw, output_path, args.fps):
         temp_raw.unlink(missing_ok=True)

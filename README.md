@@ -124,7 +124,7 @@ wget -O "Нейронка_ЦИИ/weights/sam_vit_b_01ec64.pth" \
 Через `Makefile`:
 
 ```bash
-make mask-video INPUT=recordings/road.mp4 MASK_OUTPUT=outputs/road_mask.mp4 FPS=10 THRESHOLD=0.15
+make mask-video INPUT_VIDEO=recordings/road.mp4 MASK_OUTPUT=outputs/road_mask.mp4 FPS=10 THRESHOLD=0.15 CALIB_FILE=camera_tools/undistortion/config/camera_calib.yml
 ```
 
 Прямой запуск:
@@ -135,7 +135,8 @@ python camera_tools/run_mask_pipeline.py \
   --input recordings/road.mp4 \
   --output outputs/road_mask.mp4 \
   --fps 10 \
-  --threshold 0.15
+  --threshold 0.15 \
+  --calib camera_tools/undistortion/config/camera_calib.yml
 ```
 
 ### Режим 2: камера -> поток маски (RTSP/UDP)
@@ -143,13 +144,13 @@ python camera_tools/run_mask_pipeline.py \
 Через `Makefile` (UDP по умолчанию):
 
 ```bash
-make mask-camera CAMERA=0 STREAM_URL="udp://127.0.0.1:5000?pkt_size=1316" STREAM_FORMAT=udp
+make mask-camera CAMERA=0 STREAM_URL="udp://127.0.0.1:5000?pkt_size=1316" STREAM_FORMAT=udp CALIB_FILE=camera_tools/undistortion/config/camera_calib.yml
 ```
 
 RTSP:
 
 ```bash
-make mask-camera CAMERA=0 STREAM_URL="rtsp://127.0.0.1:8554/mask" STREAM_FORMAT=rtsp
+make mask-camera CAMERA=0 STREAM_URL="rtsp://127.0.0.1:8554/mask" STREAM_FORMAT=rtsp CALIB_FILE=camera_tools/undistortion/config/camera_calib.yml
 ```
 
 Прямой запуск:
@@ -162,7 +163,8 @@ python camera_tools/run_mask_pipeline.py \
   --width 1280 \
   --height 720 \
   --stream-url "udp://127.0.0.1:5000?pkt_size=1316" \
-  --stream-format udp
+  --stream-format udp \
+  --calib camera_tools/undistortion/config/camera_calib.yml
 ```
 
 ### Проверка входящего потока
@@ -190,6 +192,55 @@ ffplay "rtsp://127.0.0.1:8554/mask"
 - OWL-ViT + SAM тяжелые для realtime на CPU, поэтому лучше начинать с низкого FPS (`5-10`) и/или меньшего разрешения.
 - Поток не падает при пустых детекциях: на выходе будет черная маска для такого кадра.
 
+## Второй пайплайн: YOLO-детекторы дефектов покрытия
+
+В отличие от SAM + OWL-ViT (open-vocabulary, детекция по тексту), это набор из
+**пяти узкоспециализированных YOLO-моделей** — ровно те же веса, что использует
+боевой Airflow DAG (`vav_dag_1.py`). Каждая модель обучена на одном типе дефекта:
+
+| Модель | Файл весов |
+|--------|------------|
+| Продольная трещина | `best_111_longtitude.pt` |
+| Поперечная трещина | `best_104_transversive.pt` |
+| "Крокодиловая" трещина | `best_105_alligator_crack.pt` |
+| Яма | `best_116_pothole.pt` |
+| Дорожная разметка | `best_112_road_marks.pt` |
+
+Веса лежат в `weights_yolo/` (в git не попадают, см. `.gitignore`).
+
+- `yolo_pipeline.py` — core-логика: класс `RoadDefectYoloPipeline` загружает все
+  пять моделей и прогоняет через них кадр, объединяя детекции в один список.
+- `camera_tools/run_yolo_image.py` — CLI для одного изображения: рисует боксы
+  с именем класса и confidence, сохраняет PNG. По аналогии с `run_mask_image.py`,
+  но без сегментации (YOLO отдаёт только bbox, не маску) и без обязательной
+  калибровки — `--calib` опционален, т.к. эти модели обучены на сырых кадрах
+  видеорегистратора, а не на кадрах со стенда SAM/OWL-ViT.
+
+Запуск:
+
+```bash
+make yolo-image INPUT_IMAGE=outputs/test_input_frame2.png YOLO_THRESHOLD=0.25
+make yolo-image-from-video INPUT_VIDEO=recordings/webcam_20260515_190833.mp4 FRAME_IDX=120
+```
+
+Прямой запуск:
+
+```bash
+python camera_tools/run_yolo_image.py \
+  --input-image outputs/test_input_frame2.png \
+  --output-dir outputs/single_image_yolo \
+  --output-name yolo_detections.png \
+  --threshold 0.25
+```
+
+**Важно:** это проверяет, что модели корректно загружаются и работают
+(«водопровод» пайплайна), а не качество детекции — для содержательного теста
+нужны реальные кадры дорожного покрытия с видеорегистратора, а не тестовые
+фото со стенда. Расчёт физических размеров дефекта (длина/ширина/диаметр из
+`DistanceCalculator` в `vav_dag_1.py`) сюда сознательно не перенесён: он
+откалиброван под конкретную оптику и положение камеры конкретного
+видеорегистратора и даст неверные цифры на кадрах с другой камеры.
+
 ## Настройка под свои данные
 
 Перед запуском измените:
@@ -215,4 +266,4 @@ ffplay "rtsp://127.0.0.1:8554/mask"
 - `local_config.example.py` — шаблон путей для v3
 - `mask_pipeline.py` — core-пайплайн масок
 - `camera_tools/run_mask_pipeline.py` — запуск видео/камера -> маска (файл/поток)
-- `Makefile` — быстрые команды `record`, `mask-video`, `mask-camera`
+- `Makefile` — быстрые команды `record-webcam`, `mask-video`, `mask-camera`, `mask-image`, `calib-capture`

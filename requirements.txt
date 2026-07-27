@@ -10,3 +10,4 @@ scikit-image>=0.21.0
 jupyter>=1.0.0
 ipykernel>=6.25.0
 segment-anything @ git+https://github.com/facebookresearch/segment-anything.git
+ultralytics>=8.3.0
