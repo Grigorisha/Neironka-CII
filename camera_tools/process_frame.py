@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Обработка одиночного кадра: на вход путь к изображению, на выход одна картинка.
 
-Что окажется на выходе, определяют две группы флагов (см. docs/SPEC_process_frame.md):
+Тонкая обёртка над FrameProcessor (frame_processor.py). Для встраивания в ROS
+или другой долгоживущий процесс используйте класс напрямую — этот скрипт грузит
+модели заново при каждом запуске (~7 секунд), см. docs/INTEGRATION_ROS.md.
 
   Группа 1 — что показывать (обязательна, ровно один флаг):
     --boxes-damage   рамки повреждений покрытия поверх оригинала (5 YOLO-моделей)
@@ -25,10 +27,8 @@ from __future__ import annotations
 import argparse
 import sys
 from pathlib import Path
-from typing import List, Optional, Tuple
 
 import cv2
-import numpy as np
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
@@ -37,24 +37,7 @@ CALIB_APPLY_DIR = Path(__file__).resolve().parent / "undistortion" / "apply"
 if str(CALIB_APPLY_DIR) not in sys.path:
     sys.path.insert(0, str(CALIB_APPLY_DIR))
 
-
-# Именованный режим -> (что делать с повреждениями, что делать с инфраструктурой)
-PIPE_PRESETS = {
-    "seg-all": ("seg", "seg"),
-    "box-all": ("box", "seg"),
-    "seg-damage": ("seg", "off"),
-    "seg-infra": ("off", "seg"),
-    "box-damage": ("box", "off"),
-    "box-infra": ("off", "box"),
-}
-PIPE_NUMBERS = {
-    "pipe1": "seg-all",
-    "pipe2": "box-all",
-    "pipe3": "seg-damage",
-    "pipe4": "seg-infra",
-    "pipe5": "box-damage",
-    "pipe6": "box-infra",
-}
+from frame_processor import PIPE_NUMBERS, PIPE_PRESETS, FrameProcessor  # noqa: E402
 
 
 def parse_args() -> argparse.Namespace:
@@ -101,37 +84,6 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def resolve_modes(args: argparse.Namespace) -> Tuple[str, str]:
-    """Сводит флаги к паре (damage_mode, infra_mode)."""
-    if args.damage or args.infra:
-        if args.pipe:
-            raise ValueError("Нельзя одновременно использовать --pipeN и --damage/--infra.")
-        if args.kind != "masks":
-            raise ValueError("--damage/--infra применимы только вместе с --masks.")
-        damage = args.damage or "off"
-        infra = args.infra or "off"
-        if damage == "off" and infra == "off":
-            raise ValueError("--damage off вместе с --infra off не даст никакого результата.")
-        return damage, infra
-
-    if args.kind == "masks":
-        if not args.pipe:
-            raise ValueError(
-                "Для --masks нужно указать пайплайн: --pipe1 … --pipe6 "
-                "(или явно --damage/--infra). Список см. в --help."
-            )
-        return PIPE_PRESETS[args.pipe]
-
-    # Режимы с рамками: пайплайн выбирать нечего, сегментация на рамки не влияет.
-    if args.pipe:
-        raise ValueError("Флаг пайплайна (--pipeN) действует только вместе с --masks.")
-    if args.kind == "boxes-damage":
-        return "box", "off"
-    if args.kind == "boxes-infra":
-        return "off", "box"
-    return "box", "box"  # boxes-all
-
-
 def load_calibration_or_die(path_str: str):
     from calibration_io import load_calibration
 
@@ -141,46 +93,8 @@ def load_calibration_or_die(path_str: str):
     return load_calibration(calib_path)
 
 
-def draw_boxes(frame_bgr: np.ndarray, items: List[Tuple[str, float, np.ndarray, Tuple[int, int, int]]]) -> np.ndarray:
-    annotated = frame_bgr.copy()
-    for label, score, box, color in items:
-        x1, y1, x2, y2 = (int(v) for v in box)
-        cv2.rectangle(annotated, (x1, y1), (x2, y2), color, 2)
-        cv2.putText(annotated, f"{label}: {score:.2f}", (x1, max(y1 - 8, 12)),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2, cv2.LINE_AA)
-    return annotated
-
-
-def build_mask_panel(shape_hw: Tuple[int, int],
-                     items: List[Tuple[Optional[np.ndarray], Tuple[int, int, int]]]) -> np.ndarray:
-    height, width = shape_hw
-    panel = np.zeros((height, width, 3), dtype=np.uint8)
-    for mask, color in items:
-        if mask is None or mask.shape != (height, width):
-            continue
-        panel[mask] = color
-    return panel
-
-
-def box_fill_mask(box_xyxy: np.ndarray, shape_hw: Tuple[int, int]) -> np.ndarray:
-    height, width = shape_hw
-    x1, x2 = sorted(int(round(v)) for v in (box_xyxy[0], box_xyxy[2]))
-    y1, y2 = sorted(int(round(v)) for v in (box_xyxy[1], box_xyxy[3]))
-    x1, x2 = max(0, min(x1, width)), max(0, min(x2, width))
-    y1, y2 = max(0, min(y1, height)), max(0, min(y2, height))
-    mask = np.zeros((height, width), dtype=bool)
-    mask[y1:y2, x1:x2] = True
-    return mask
-
-
 def run() -> int:
     args = parse_args()
-
-    try:
-        damage_mode, infra_mode = resolve_modes(args)
-    except ValueError as exc:
-        print(f"Ошибка: {exc}", file=sys.stderr)
-        return 2
 
     input_path = Path(args.input).expanduser().resolve()
     if not input_path.exists():
@@ -204,84 +118,31 @@ def run() -> int:
             return 1
         frame = calib.undistort(frame)
 
-    shape_hw = frame.shape[:2]
-    device = args.device or None
-
-    from local_config import MODEL_TYPE, SAM_CHECKPOINT, YOLO_WEIGHTS_DIR
-
-    box_items: List[Tuple[str, float, np.ndarray, Tuple[int, int, int]]] = []
-    mask_items: List[Tuple[Optional[np.ndarray], Tuple[int, int, int]]] = []
-    n_damage = n_infra = 0
-
-    # --- Повреждения покрытия: 5 YOLO-моделей (+ SAM в режиме seg) ---
-    if damage_mode != "off":
-        from yolo_pipeline import color_for_model_key
-        weights_dir = Path(args.weights_dir).expanduser().resolve() if args.weights_dir else Path(YOLO_WEIGHTS_DIR)
-
-        if damage_mode == "seg":
-            from yolo_sam_pipeline import YoloSamMaskPipeline
-            pipeline = YoloSamMaskPipeline(
-                yolo_weights_dir=weights_dir, sam_checkpoint=SAM_CHECKPOINT,
-                sam_model_type=MODEL_TYPE, threshold=args.threshold, device=device,
-            )
-            results = pipeline.detect_and_segment(frame)
-            n_damage = len(results)
-            for r in results:
-                color = color_for_model_key(r.detection.model_key)
-                box_items.append((r.detection.label, r.detection.score, r.detection.box_xyxy, color))
-                mask_items.append((r.sam_mask, color))
-        else:  # box — сегментацию не запускаем, SAM не нужен
-            from yolo_pipeline import RoadDefectYoloPipeline
-            pipeline = RoadDefectYoloPipeline(
-                weights_dir=weights_dir, threshold=args.threshold, device=device,
-            )
-            detections = pipeline.detect(frame)
-            n_damage = len(detections)
-            for d in detections:
-                color = color_for_model_key(d.model_key)
-                box_items.append((d.label, d.score, d.box_xyxy, color))
-                mask_items.append((box_fill_mask(d.box_xyxy, shape_hw), color))
-
-    # --- Инфраструктура: OWL-ViT (+ SAM в режиме seg) ---
-    if infra_mode != "off":
-        from mask_pipeline import INFRA_TEXTS, SamOwlVitMaskPipeline, color_for_infra_label
-
-        infra_pipeline = SamOwlVitMaskPipeline(
-            sam_checkpoint=SAM_CHECKPOINT, model_type=MODEL_TYPE, texts=INFRA_TEXTS,
-            threshold=args.infra_threshold, device=device,
+    try:
+        processor = FrameProcessor(
+            kind=args.kind, pipe=args.pipe, damage=args.damage, infra=args.infra,
+            weights_dir=args.weights_dir or None,
+            threshold=args.threshold, infra_threshold=args.infra_threshold,
+            device=args.device or None,
         )
-        detections = infra_pipeline.detect_boxes(frame)
-        n_infra = len(detections)
-        for d in detections:
-            color = color_for_infra_label(d.label)
-            box_items.append((d.label, d.score, d.box_xyxy, color))
+    except ValueError as exc:
+        print(f"Ошибка: {exc}", file=sys.stderr)
+        return 2
 
-        if infra_mode == "seg":
-            masks = infra_pipeline.segment_boxes(frame, [d.box_xyxy for d in detections])
-            # segment_boxes пропускает детекции, на которых SAM упал, поэтому
-            # длины могут разойтись — сопоставляем по порядку, сколько есть.
-            for mask, d in zip(masks, detections):
-                mask_items.append((mask, color_for_infra_label(d.label)))
-        else:
-            for d in detections:
-                mask_items.append((box_fill_mask(d.box_xyxy, shape_hw), color_for_infra_label(d.label)))
-
-    # --- Отрисовка ---
-    if args.kind == "masks":
-        result = build_mask_panel(shape_hw, mask_items)
-    else:
-        result = draw_boxes(frame, box_items)
+    result = processor.process(frame)
 
     output_path = Path(args.output).expanduser().resolve()
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    if not cv2.imwrite(str(output_path), result):
+    if not cv2.imwrite(str(output_path), result.image):
         print(f"Ошибка: не удалось сохранить {output_path}", file=sys.stderr)
         return 1
 
-    print(f"Режим: {args.kind} (повреждения={damage_mode}, инфраструктура={infra_mode})")
-    print(f"Найдено: повреждений {n_damage}, инфраструктуры {n_infra}")
-    for label, score, _, _ in box_items:
-        print(f"  {label}: {score:.3f}")
+    print(f"Режим: {args.kind} (повреждения={processor.damage_mode}, "
+          f"инфраструктура={processor.infra_mode})")
+    print(f"Найдено: повреждений {len(result.damage_items)}, "
+          f"инфраструктуры {len(result.infra_items)}")
+    for item in result.items:
+        print(f"  [{item.source}] {item.label}: {item.score:.3f}")
     print(f"Сохранено: {output_path}")
     return 0
 
