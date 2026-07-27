@@ -182,7 +182,9 @@ class DefectDetectionNode(Node):
 
         self._n_done += 1
         every = max(1, int(self.config["log_every"]))
-        if self._n_done % every == 0:
+        # Первый кадр логируем всегда: обработка медленная, и без этого непонятно,
+        # заработала нода или молча простаивает.
+        if self._n_done == 1 or self._n_done % every == 0:
             elapsed = time.time() - t0
             self.get_logger().info(
                 f"кадров обработано {self._n_done}, пропущено {self._n_dropped} | "
