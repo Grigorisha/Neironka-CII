@@ -3,8 +3,9 @@ from __future__ import annotations
 
 import inspect
 from dataclasses import dataclass
-from typing import Any, Iterable, List, Sequence, Tuple
+from typing import Any, Dict, Iterable, List, Sequence, Tuple
 
+import cv2
 import numpy as np
 import torch
 from PIL import Image
@@ -96,6 +97,91 @@ DEFAULT_TEXTS: List[str] = [
     "construction damage",
     "roadwork trace",
 ]
+
+
+# Придорожная инфраструктура: знаки, столбы, светофоры, люки и решётки.
+# Отдельный от DEFAULT_TEXTS список — он короче (быстрее прогон OWL-ViT) и не
+# содержит повреждений покрытия и разметки, которые ищут специализированные
+# YOLO-модели. При совместном режиме дубли между пайплайнами сейчас намеренно
+# не подавляются — сравниваем качество, чистку отложили.
+INFRA_TEXTS: List[str] = [
+    # Знаки
+    "road sign",
+    "traffic sign",
+    "stop sign",
+    "speed limit sign",
+    "warning sign",
+    # Столбы и опоры
+    "lamp post",
+    "street light",
+    "light pole",
+    "pole",
+    "utility pole",
+    "electric pole",
+    "telephone pole",
+    # Светофоры
+    "traffic light",
+    # Люки и водоотвод
+    "manhole",
+    "manhole cover",
+    "drain grate",
+    "storm drain",
+]
+
+# Русские названия групп — для консоли и отчётов.
+INFRA_GROUP_RU_NAMES: Dict[str, str] = {
+    "sign": "Дорожный знак",
+    "pole": "Столб / опора",
+    "traffic_light": "Светофор",
+    "manhole": "Люк / решётка",
+}
+
+# К какой группе относится каждый текстовый класс.
+INFRA_LABEL_GROUPS: Dict[str, str] = {
+    "road sign": "sign",
+    "traffic sign": "sign",
+    "stop sign": "sign",
+    "speed limit sign": "sign",
+    "warning sign": "sign",
+    "lamp post": "pole",
+    "street light": "pole",
+    "light pole": "pole",
+    "pole": "pole",
+    "utility pole": "pole",
+    "electric pole": "pole",
+    "telephone pole": "pole",
+    "traffic light": "traffic_light",
+    "manhole": "manhole",
+    "manhole cover": "manhole",
+    "drain grate": "manhole",
+    "storm drain": "manhole",
+}
+
+# Палитра инфраструктуры (BGR). Намеренно не пересекается с цветами повреждений
+# из yolo_pipeline.MODEL_KEY_COLORS_BGR (красный, пурпурный, жёлтый, голубой,
+# зелёный) — иначе в совместном режиме объекты двух пайплайнов не различить.
+INFRA_COLORS_BGR: Dict[str, Tuple[int, int, int]] = {
+    "sign": (0, 165, 255),          # оранжевый
+    "pole": (255, 0, 0),            # синий
+    "traffic_light": (226, 43, 138),  # фиолетовый
+    "manhole": (255, 255, 255),     # белый
+}
+
+
+def infra_group_for_label(label: str) -> str:
+    return INFRA_LABEL_GROUPS.get(label.strip().lower(), "other")
+
+
+def color_for_infra_label(label: str) -> Tuple[int, int, int]:
+    group = infra_group_for_label(label)
+    if group in INFRA_COLORS_BGR:
+        return INFRA_COLORS_BGR[group]
+    # Фолбэк для классов вне карты: стабильный по имени, в тёплой части спектра,
+    # чтобы не совпасть с зелёным/голубым/жёлтым у повреждений.
+    digest = sum(ord(c) for c in label)
+    hsv = np.uint8([[[(digest * 23) % 30, 200, 255]]])
+    bgr = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)[0, 0]
+    return int(bgr[0]), int(bgr[1]), int(bgr[2])
 
 
 @dataclass
