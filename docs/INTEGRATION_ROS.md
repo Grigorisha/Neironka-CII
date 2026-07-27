@@ -4,7 +4,7 @@
 повреждений и придорожной инфраструктуры, в ROS-ноду.
 
 **Коротко:** на вход кадр (numpy BGR), на выход обработанное изображение и список
-детекций. Обработка в реальном времени невозможна — см. раздел 6, там замеры.
+детекций. Обработка в реальном времени невозможна — см. раздел 7, там замеры.
 
 ---
 
@@ -50,7 +50,66 @@ cd ~/workspace/detection
 
 ---
 
-## 3. Как встраивать — Python API
+## 3. Готовая нода (быстрый старт)
+
+Ноду писать не нужно — она уже есть: `ros/defect_detection_node.py`. Берёт кадр
+из входного топика, публикует обработанный в выходной. Режим задаётся JSON-конфигом,
+код править не требуется.
+
+```bash
+source /opt/ros2_humble/install/setup.bash
+cd ~/workspace/detection
+~/workspace/.venvs/detection/bin/python ros/defect_detection_node.py \
+    --config ros/config/default.json
+```
+
+Важно, каким интерпретатором запускать: **venv-овским**. `rclpy` собран для
+Python 3.8, venv тоже на Python 3.8, поэтому после `source setup.bash`
+интерпретатор venv видит и `rclpy`, и torch с CUDA. Проверено на Jetson.
+
+### Конфиг
+
+`ros/config/default.json`, все ключи необязательны — чего нет, берётся из значений
+по умолчанию:
+
+| Ключ | Значение по умолчанию | Смысл |
+|---|---|---|
+| `input_topic` | `/camera/color/image_raw` | откуда брать кадры |
+| `output_topic` | `/defect_detection/image` | куда публиковать результат |
+| `kind` | `"masks"` | что показывать: `boxes-damage`, `boxes-infra`, `boxes-all`, `masks` |
+| `pipe` | `"pipe3"` | какой пайплайн (только при `kind="masks"`), `pipe1`…`pipe6` |
+| `damage` / `infra` | `null` | явная форма вместо `pipe`: `"seg"`, `"box"`, `"off"` |
+| `threshold` | `0.25` | порог уверенности YOLO |
+| `infra_threshold` | `0.15` | порог уверенности OWL-ViT |
+| `weights_dir` | `null` | папка весов YOLO; `null` = из `local_config.py` |
+| `device` | `null` | `"cuda"` / `"cpu"`; `null` = автоопределение |
+| `input_reliability` | `"best_effort"` | QoS входа: `best_effort` или `reliable` |
+| `output_reliability` | `"reliable"` | QoS выхода |
+| `log_every` | `10` | как часто писать статистику в лог |
+
+Неизвестный ключ в конфиге — ошибка с перечислением допустимых, чтобы опечатка
+не осталась незамеченной.
+
+### Как нода ведёт себя под нагрузкой
+
+Обработка медленнее съёмки (раздел 7), поэтому обрабатывать каждый кадр нода
+не пытается. Приёмный колбэк только запоминает последний кадр, обработка идёт
+в отдельном потоке. Кадры, пришедшие во время обработки, вытесняются — очередь
+не растёт, задержка не накапливается, на выход всегда идёт свежий кадр.
+
+Проверено на Jetson: при подаче 6 кадров с частотой 6 Гц (темп реальной съёмки)
+нода отдала 2 обработанных — остальные вытеснены, как и задумано. `header`
+входного сообщения переносится в выходное, поэтому штамп времени и `frame_id`
+сохраняются.
+
+`cv_bridge` не используется: на этой машине он не установлен, а конвертация
+`sensor_msgs/Image` ↔ numpy для `bgr8`/`rgb8` делается вручную (с учётом
+выравнивания строк `msg.step`). Поддерживаются кодировки `bgr8` и `rgb8`,
+остальные вызывают понятную ошибку.
+
+---
+
+## 4. Как встраивать — Python API
 
 **Главное правило: не запускайте CLI на каждый кадр.** `camera_tools/process_frame.py`
 загружает модели заново при каждом старте — на Jetson это ~7 секунд. Для ноды
@@ -75,7 +134,7 @@ result.infra_items    # только инфраструктура
 | `label` | `str` | класс, как его назвала модель (`"Pothole"`, `"road sign"`, …) |
 | `score` | `float` | уверенность 0..1 |
 | `box_xyxy` | `np.ndarray` | `[x1, y1, x2, y2]` в пикселях кадра |
-| `color_bgr` | `tuple` | цвет класса в палитре (см. раздел 5) |
+| `color_bgr` | `tuple` | цвет класса в палитре (см. раздел 6) |
 | `source` | `str` | `"damage"` или `"infra"` |
 | `model_key` | `str` \| `None` | для damage — какая из 5 моделей сработала |
 | `mask` | `np.ndarray` \| `None` | bool-маска `HxW`, если режим её строит |
@@ -88,18 +147,20 @@ result.infra_items    # только инфраструктура
 ### Формат кадра
 
 Ожидается **BGR** (соглашение OpenCV), форма `(H, W, 3)`, `dtype=uint8`.
-Из ROS через `cv_bridge`:
+
+`cv_bridge` на этой машине **не установлен**. Готовые функции конвертации без него
+есть в ноде — берите оттуда:
 
 ```python
-frame_bgr = bridge.imgmsg_to_cv2(msg, desired_encoding="bgr8")
+from ros.defect_detection_node import imgmsg_to_bgr, bgr_to_imgmsg
+
+frame_bgr = imgmsg_to_bgr(msg)                       # sensor_msgs/Image -> numpy BGR
+out_msg = bgr_to_imgmsg(result.image, msg.header)    # обратно, с сохранением header
 ```
 
-Обратно:
-
-```python
-out_msg = bridge.cv2_to_imgmsg(result.image, encoding="bgr8")
-out_msg.header = msg.header      # сохраните исходный штамп времени
-```
+Если всё же соберёте `cv_bridge`, эквивалент — `bridge.imgmsg_to_cv2(msg,
+desired_encoding="bgr8")` и `bridge.cv2_to_imgmsg(result.image, encoding="bgr8")`;
+не забудьте перенести `out_msg.header = msg.header`.
 
 Если передать RGB, детекция формально отработает, но качество упадёт — модели
 обучались на правильном порядке каналов.
@@ -126,7 +187,7 @@ class DefectDetectionNode(Node):
         self.proc = FrameProcessor(kind="masks", pipe="pipe3")
         self.get_logger().info("Модели загружены")
 
-        self.busy = False          # обработка не поспевает за камерой (см. раздел 6),
+        self.busy = False          # обработка не поспевает за камерой (см. раздел 7),
                                    # поэтому кадры, пришедшие во время работы, пропускаем
         self.pub = self.create_publisher(Image, "~/processed", 1)
         self.create_subscription(Image, "/camera/color/image_raw", self.on_frame, 1)
@@ -157,7 +218,7 @@ def main():
 
 ---
 
-## 4. Режимы
+## 5. Режимы
 
 Задаются двумя параметрами конструктора: `kind` (что показывать) и `pipe`
 (каким пайплайном; только при `kind="masks"`).
@@ -192,7 +253,7 @@ def main():
 
 ---
 
-## 5. Палитра
+## 6. Палитра
 
 Цвет закреплён за классом и не зависит от кадра и порядка детекций.
 
@@ -208,7 +269,7 @@ def main():
 
 ---
 
-## 6. Производительность: почему в реальном времени не выйдет
+## 7. Производительность: почему в реальном времени не выйдет
 
 Замерено на **Jetson AGX Orin**, кадры 1920×1080, 8 кадров, с прогревом CUDA,
 на простаивающей машине.
@@ -262,7 +323,7 @@ TensorRT станет достижимым.
 
 ---
 
-## 7. На что обратить внимание
+## 8. На что обратить внимание
 
 - **Python-окружение.** Модуль живёт в venv `~/workspace/.venvs/detection`
   (Python 3.8, torch от NVIDIA). ROS-нода должна запускаться в окружении, где
@@ -293,11 +354,13 @@ TensorRT станет достижимым.
 
 ---
 
-## 8. Файлы
+## 9. Файлы
 
 | Файл | Назначение |
 |---|---|
-| `frame_processor.py` | **точка входа для интеграции** — класс `FrameProcessor` |
+| `ros/defect_detection_node.py` | **готовая ROS 2-нода**: топик -> обработка -> топик |
+| `ros/config/default.json` | конфиг ноды: топики, режим, пороги, QoS |
+| `frame_processor.py` | **точка входа для своей интеграции** — класс `FrameProcessor` |
 | `yolo_pipeline.py` | 5 YOLO-моделей, подавление пересечений, палитра повреждений |
 | `yolo_sam_pipeline.py` | YOLO + SAM: точная маска по боксу |
 | `mask_pipeline.py` | OWL-ViT + SAM, список `INFRA_TEXTS`, палитра инфраструктуры |

@@ -1,0 +1,18 @@
+{
+  "input_topic": "/camera/color/image_raw",
+  "output_topic": "/defect_detection/image",
+
+  "kind": "masks",
+  "pipe": "pipe3",
+  "damage": null,
+  "infra": null,
+
+  "threshold": 0.25,
+  "infra_threshold": 0.15,
+  "weights_dir": null,
+  "device": null,
+
+  "input_reliability": "best_effort",
+  "output_reliability": "reliable",
+  "log_every": 10
+}
