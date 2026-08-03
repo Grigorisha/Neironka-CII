@@ -259,6 +259,17 @@ python camera_tools/run_yolo_image.py \
 - Первый прогон скачивает веса OWL-ViT с Hugging Face (~600 МБ).
 - В v4 пути заточены под Windows; на Linux без правки путей ноутбук не откроет файлы.
 
+## Документация
+
+- [docs/OPEN_ISSUES.md](docs/OPEN_ISSUES.md) — **устройство всего пайплайна и
+  открытые проблемы**: архитектура, дообучение, постобработка, вопросы к
+  смежным этапам
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — как устроен модуль детекции
+  и ROS-нода, с диаграммами
+- [docs/INTEGRATION_ROS.md](docs/INTEGRATION_ROS.md) — встраивание в свой код
+- [docs/USAGE_ROS_NODE.md](docs/USAGE_ROS_NODE.md) — запуск и отладка ноды
+- [docs/SPEC_process_frame.md](docs/SPEC_process_frame.md) — режимы обработки кадра
+
 ## Связанные файлы
 
 - `requirements.txt` — зависимости Python
