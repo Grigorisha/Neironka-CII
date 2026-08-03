@@ -261,9 +261,11 @@ python camera_tools/run_yolo_image.py \
 
 ## Документация
 
-- [docs/OPEN_ISSUES.md](docs/OPEN_ISSUES.md) — **устройство всего пайплайна и
-  открытые проблемы**: архитектура, дообучение, постобработка, вопросы к
-  смежным этапам
+- [docs/ISSUES_FOR_REVIEW.md](docs/ISSUES_FOR_REVIEW.md) — **обзор проблем для
+  команды**: что мешает, на что влияет, что предлагается делать
+- [docs/OPEN_ISSUES.md](docs/OPEN_ISSUES.md) — устройство всего пайплайна и
+  полный внутренний список открытых проблем: архитектура, дообучение,
+  постобработка, вопросы к смежным этапам
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — как устроен модуль детекции
   и ROS-нода, с диаграммами
 - [docs/INTEGRATION_ROS.md](docs/INTEGRATION_ROS.md) — встраивание в свой код
