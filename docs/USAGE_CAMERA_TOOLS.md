@@ -4,6 +4,12 @@
 
 **Калибровка камеры (шахматная доска, undistort):** см. `undistortion/README.md`.
 
+**Одиночные снимки с точной меткой времени** (максимальная частота, управление
+выдержкой, метка из часов камеры) — отдельный инструмент
+`capture_realsense_shot.py`, см. [USAGE_SHOTS.md](USAGE_SHOTS.md).
+Описанный ниже `capture_realsense_rgb_photo.py` работает через V4L2 и часов
+камеры не даёт.
+
 Во всех рабочих скриптах `camera_tools` параметр `--calib` обязателен. Пример файла:
 
 `/home/orin/workspace/detection/camera_tools/undistortion/config/camera_calib.yml`
@@ -97,7 +103,9 @@ python3 /home/orin/workspace/detection/camera_tools/capture_realsense_rgb_photo.
 
 ## 6) Где находятся скрипты
 
+- `capture_realsense_shot.py` - одиночные снимки с меткой времени камеры (SDK).
 - `simple_camera_viewer.py` - просмотр потока камеры.
 - `capture_realsense_rgb_photo.py` - сохранить одно RGB фото.
 - `take_rgb_photo.sh` - удобная обертка для команды фото.
 - `record_webcam_mp4.py` - запись видео в MP4.
+- `record_realsense_raw.py` - запись видео без сжатия с RGB RealSense.

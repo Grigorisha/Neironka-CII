@@ -7,6 +7,7 @@ YOLO_IMAGE_SCRIPT ?= camera_tools/run_yolo_image.py
 VIEWER_SCRIPT ?= camera_tools/simple_camera_viewer.py
 RGB_PHOTO_SCRIPT ?= camera_tools/capture_realsense_rgb_photo.py
 CALIB_CAPTURE_SCRIPT ?= camera_tools/undistortion/scripts/capture_calib_photos.sh
+SHOT_SCRIPT ?= camera_tools/capture_realsense_shot.py
 
 OUTPUT ?= recordings/webcam_$(shell date +%Y%m%d_%H%M%S).mp4
 INPUT_VIDEO ?= recordings/webcam_20260515_190833.mp4
@@ -35,11 +36,19 @@ WINDOW_BACKEND ?= gstreamer
 DISPLAY_VAR ?= :1
 XAUTHORITY_VAR ?= /home/orin/.Xauthority
 RGB_OUTPUT_DIR ?= outputs/rgb_snapshots
+SHOT_OUTPUT_DIR ?= outputs/shots
+SHOT_WIDTH ?= 1920
+SHOT_HEIGHT ?= 1080
+SHOT_FPS ?= 0
+SHOT_EXPOSURE_US ?= 0
+SHOT_AE_LIMIT_US ?= 8000
+SHOT_GAIN ?= -1
+SHOT_BURST ?= 1
 CALIB_PHOTOS_DIR ?= outputs/calib_photos
 CALIB_MAX_SHOTS ?= 20
 CALIB_FILE ?= camera_tools/undistortion/config/camera_calib.yml
 
-.PHONY: help record-webcam mask-video mask-camera extract-frame mask-image mask-image-from-video yolo-image yolo-image-from-video camera-list camera-viewer camera-rgb-photo calib-capture
+.PHONY: help record-webcam mask-video mask-camera extract-frame mask-image mask-image-from-video yolo-image yolo-image-from-video camera-list camera-viewer camera-rgb-photo shots shot-once shots-profiles calib-capture
 
 help:
 	@echo "Удобные команды:"
@@ -54,6 +63,9 @@ help:
 	@echo "  make camera-list           - Показать /dev/video* устройства"
 	@echo "  make camera-viewer         - Просмотр камеры в реальном времени"
 	@echo "  make camera-rgb-photo      - Снять 1 фото с RGB камеры RealSense"
+	@echo "  make shots                 - Снимки с меткой времени камеры (SPACE), макс. частота"
+	@echo "  make shot-once             - Один снимок без окна и выход"
+	@echo "  make shots-profiles        - Список режимов RGB-потока камеры"
 	@echo "  make calib-capture         - Интерактивная съемка шахматной доски (preview + save по кнопке)"
 	@echo ""
 	@echo "Параметры (можно переопределять):"
@@ -160,6 +172,31 @@ camera-rgb-photo:
 		--width "$(WIDTH)" \
 		--height "$(HEIGHT)" \
 		--calib "$(CALIB_FILE)"
+
+shots:
+	@mkdir -p "$(SHOT_OUTPUT_DIR)"
+	$(PYTHON) "$(SHOT_SCRIPT)" "$(SHOT_OUTPUT_DIR)" \
+		--width "$(SHOT_WIDTH)" \
+		--height "$(SHOT_HEIGHT)" \
+		--fps "$(SHOT_FPS)" \
+		--exposure-us "$(SHOT_EXPOSURE_US)" \
+		--ae-limit-us "$(SHOT_AE_LIMIT_US)" \
+		--gain "$(SHOT_GAIN)" \
+		--burst "$(SHOT_BURST)"
+
+shot-once:
+	@mkdir -p "$(SHOT_OUTPUT_DIR)"
+	$(PYTHON) "$(SHOT_SCRIPT)" "$(SHOT_OUTPUT_DIR)" --once \
+		--width "$(SHOT_WIDTH)" \
+		--height "$(SHOT_HEIGHT)" \
+		--fps "$(SHOT_FPS)" \
+		--exposure-us "$(SHOT_EXPOSURE_US)" \
+		--ae-limit-us "$(SHOT_AE_LIMIT_US)" \
+		--gain "$(SHOT_GAIN)" \
+		--burst "$(SHOT_BURST)"
+
+shots-profiles:
+	$(PYTHON) "$(SHOT_SCRIPT)" --list-profiles
 
 calib-capture:
 	@mkdir -p "$(CALIB_PHOTOS_DIR)"

@@ -22,6 +22,16 @@ RECORD_WIDTH ?= 1920
 RECORD_HEIGHT ?= 1080
 RECORD_FPS ?= 6
 
+SHOT_SCRIPT ?= capture_realsense_shot.py
+SHOT_OUTPUT_DIR ?= ../outputs/shots
+SHOT_WIDTH ?= 1920
+SHOT_HEIGHT ?= 1080
+SHOT_FPS ?= 0
+SHOT_EXPOSURE_US ?= 0
+SHOT_AE_LIMIT_US ?= 8000
+SHOT_GAIN ?= -1
+SHOT_BURST ?= 1
+
 CALIB_FILE ?= undistortion/config/camera_calib.yml
 CALIB_PHOTOS_DIR ?= ../outputs/calib_photos
 CALIB_PREFIX ?= calib
@@ -32,7 +42,7 @@ SQUARE_SIZE ?= 0.025
 MIN_IMAGES ?= 12
 SHOW_DETECTIONS ?= 0
 
-.PHONY: help camera-list camera-on calib-test calib-capture calib-solve calib-solve-gui record-raw
+.PHONY: help camera-list camera-on calib-test calib-capture calib-solve calib-solve-gui record-raw shots shots-profiles shot-once
 
 help:
 	@echo "Camera tools Make targets:"
@@ -43,12 +53,16 @@ help:
 	@echo "  make calib-solve   - Расчет коэффициентов калибровки по снимкам (headless)"
 	@echo "  make calib-solve-gui - Калибровка с показом найденных углов (нужен DISPLAY)"
 	@echo "  make record-raw    - Превью + запись видео без сжатия (RGB RealSense, макс. разрешение)"
+	@echo "  make shots         - Превью + одиночные снимки с меткой времени камеры (SPACE)"
+	@echo "  make shot-once     - Один снимок без окна и выход (для SSH/скриптов)"
+	@echo "  make shots-profiles - Список режимов RGB-потока камеры"
 	@echo ""
 	@echo "Клавиши:"
 	@echo "  camera-on: q для выхода"
 	@echo "  calib-test: c включить/выключить калибровку, q для выхода"
 	@echo "  calib-capture: SPACE/s сохранить кадр, q/ESC выход"
 	@echo "  record-raw: SPACE старт/стоп записи, q для выхода"
+	@echo "  shots: SPACE сохранить снимок, q для выхода"
 	@echo ""
 	@echo "Основные параметры:"
 	@echo "  DEVICE=$(DEVICE)"
@@ -64,6 +78,8 @@ help:
 	@echo "  make calib-capture CALIB_PHOTOS_DIR=../outputs/calib_photos CALIB_MAX_SHOTS=25"
 	@echo "  make calib-solve CALIB_PHOTOS_DIR=../outputs/calib_photos PATTERN_SIZE=9x6 SQUARE_SIZE=0.025"
 	@echo "  make calib-solve-gui DISPLAY_VAR=:1 XAUTHORITY_VAR=/home/orin/.Xauthority"
+	@echo "  make shots SHOT_EXPOSURE_US=1500      # фиксированная выдержка 1.5 мс, съёмка на ходу"
+	@echo "  make shots SHOT_WIDTH=960 SHOT_HEIGHT=540  # 60 Гц вместо 30"
 
 camera-list:
 	$(PYTHON) "$(VIEWER_SCRIPT)" --list
@@ -129,3 +145,32 @@ record-raw:
 		--width "$(RECORD_WIDTH)" \
 		--height "$(RECORD_HEIGHT)" \
 		--fps "$(RECORD_FPS)"
+
+shots:
+	@mkdir -p "$(SHOT_OUTPUT_DIR)"
+	DISPLAY="$(DISPLAY_VAR)" XAUTHORITY="$(XAUTHORITY_VAR)" \
+	$(PYTHON) "$(SHOT_SCRIPT)" \
+		"$(SHOT_OUTPUT_DIR)" \
+		--width "$(SHOT_WIDTH)" \
+		--height "$(SHOT_HEIGHT)" \
+		--fps "$(SHOT_FPS)" \
+		--exposure-us "$(SHOT_EXPOSURE_US)" \
+		--ae-limit-us "$(SHOT_AE_LIMIT_US)" \
+		--gain "$(SHOT_GAIN)" \
+		--burst "$(SHOT_BURST)"
+
+shot-once:
+	@mkdir -p "$(SHOT_OUTPUT_DIR)"
+	$(PYTHON) "$(SHOT_SCRIPT)" \
+		"$(SHOT_OUTPUT_DIR)" \
+		--once \
+		--width "$(SHOT_WIDTH)" \
+		--height "$(SHOT_HEIGHT)" \
+		--fps "$(SHOT_FPS)" \
+		--exposure-us "$(SHOT_EXPOSURE_US)" \
+		--ae-limit-us "$(SHOT_AE_LIMIT_US)" \
+		--gain "$(SHOT_GAIN)" \
+		--burst "$(SHOT_BURST)"
+
+shots-profiles:
+	$(PYTHON) "$(SHOT_SCRIPT)" --list-profiles

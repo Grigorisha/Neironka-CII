@@ -28,3 +28,6 @@ recordings/*.avi
 .vscode/
 .DS_Store
 Thumbs.db
+
+# Файлы блокировки LibreOffice (появляются при открытом .docx)
+.~lock.*#

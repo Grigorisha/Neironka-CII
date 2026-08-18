@@ -274,6 +274,10 @@ python camera_tools/run_yolo_image.py \
 - [docs/INTEGRATION_ROS.md](docs/INTEGRATION_ROS.md) — встраивание в свой код
 - [docs/USAGE_ROS_NODE.md](docs/USAGE_ROS_NODE.md) — запуск и отладка ноды
 - [docs/SPEC_process_frame.md](docs/SPEC_process_frame.md) — режимы обработки кадра
+- [docs/USAGE_SHOTS.md](docs/USAGE_SHOTS.md) — одиночные снимки с точной меткой
+  времени камеры: борьба со смазом, выдержка, синхронизация времени
+- [docs/USAGE_CAMERA_TOOLS.md](docs/USAGE_CAMERA_TOOLS.md) — остальные утилиты
+  камеры: просмотр, калибровка, запись видео
 
 ## Связанные файлы
 
@@ -282,4 +286,6 @@ python camera_tools/run_yolo_image.py \
 - `local_config.example.py` — шаблон путей для v3
 - `mask_pipeline.py` — core-пайплайн масок
 - `camera_tools/run_mask_pipeline.py` — запуск видео/камера -> маска (файл/поток)
+- `camera_tools/capture_realsense_shot.py` — одиночные снимки с меткой времени камеры
+- `camera_tools/record_realsense_raw.py` — запись видео без сжатия
 - `Makefile` — быстрые команды `record-webcam`, `mask-video`, `mask-camera`, `mask-image`, `calib-capture`
